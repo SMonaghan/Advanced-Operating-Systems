@@ -1,0 +1,38 @@
+# data
+thd1:
+sp
+stack[STACK_SIZE]
+
+thd2:
+sp
+stack[STACK_SIZE]
+
+#Code: Context Switch
+Switch:
+push $Post_Switch
+push %a
+push %b
+push %c
+mov %sp, %thd
+mov %otherthd, %sp
+pop %c
+pop %b
+pop %a
+pop %ip
+
+Post_Switch:
+ret
+
+#Code: Sys Call
+Sys_Call:
+push %a
+push %b
+push %c
+mov %ip, %a
+mov %sp, %b
+sysenter
+pop %c
+pop %b
+pop %a
+
+
