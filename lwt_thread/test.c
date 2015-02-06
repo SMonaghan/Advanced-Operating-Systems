@@ -2,17 +2,17 @@
 #include <stdio.h>
 #include "lwt_thread.h"
 
-void * fuck_you_func(void *d){
+void * demo_func(void *d){
 	return 90;
 }
 
 int main(int argc, char argv[]){
 
 	printf("start\n");
-	lwt_t main = lwt_create(fuck_you_func, NULL);
+	lwt_t main = lwt_create(demo_func, NULL);
 	printf("main created\n");
-	lwt_t test1 = lwt_create(fuck_you_func, NULL);
-	lwt_t test2 = lwt_create(fuck_you_func, NULL);
+	lwt_t test1 = lwt_create(demo_func, NULL);
+	lwt_t test2 = lwt_create(demo_func, NULL);
 
 	printf("all created!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
 	
@@ -22,7 +22,6 @@ int main(int argc, char argv[]){
 	__lwt_dispatch(main, test1);
 
 	printf("Dispatch one\n");
-	printf("Dispatch one\n");
 	int a = 5;
 	int b = 10;
 	int c = a*b;
@@ -31,6 +30,7 @@ int main(int argc, char argv[]){
 		c+=b;
 	}
 
+	printf("%d %d %d\n", a, b, c);
 	__lwt_dispatch(test1, test2);
 
 	printf("Dispatch two\n");

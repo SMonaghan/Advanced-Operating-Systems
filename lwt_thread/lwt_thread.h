@@ -50,7 +50,7 @@ lwt_t lwt_create(lwt_fn_t fn, void *data){
 	printf("Start\n");	
 	lwt_t lwt_thd = malloc(sizeof(struct thread));
 	printf("Malloced!!!!!!!\n");	
-	
+
 	lwt_thd->stack = malloc(STACK_SIZE);
 	printf("Stack Allocated!!!!!!!\n");	
 	lwt_thd->id = 1;//generate_id();
@@ -102,30 +102,27 @@ void __lwt_schedule(void){
 
 void __lwt_dispatch(lwt_t current, lwt_t next){
 
-	printf("PUSH START!!!!!!!!!!");
+	//printf("PUSH START!!!!!!!!!!");
 	asm volatile ("pushl %eax \n\t"
 			"pushl %ebx \n\t"
 			"pushl %ecx \n\t"
 			"pushl %edx \n\t"
 			"pushl %esi \n\t"
 			"pushl %edi \n\t");
-	printf("PUSH DONE!!!!!!!!!!");
-
-	printf("Stack Switch START!!!!!!!!!!");
-	asm volatile ("movl %%esp, %0 \n\t"
-			"movl %1, %%esp \n\t" :
-			"=r" (current->sp):
-			"r" (next->sp):
-			"memory");
-	printf("Stack Switch DONE!!!!!!!!!!");
 	
-	printf("POP START!!!!!!!!!!");
+	asm volatile ("movl %%esp, %0 \n\t"
+			"movl %1, %%esp \n\t"
+			:"=r" (current->sp)
+			:"r" (next->sp)
+			:"memory");
+	
 	asm volatile ("popl %edi \n\t"
 			"popl %esi \n\t"
 			"popl %edx \n\t"
 			"popl %ecx \n\t"
 			"popl %ebx \n\t"
 			"popl %eax \n\t");
+	printf("\n");
 	printf("POP DONE!!!!!!!!!!");
 }
 
