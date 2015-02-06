@@ -1,5 +1,5 @@
 OBJS=test.o
-CFLAGS=-g -I. -w
+CFLAGS=-g -I. -w -m32
 #DEFINES=-DTHINK_TIME
 BIN=thread
 CC=gcc
