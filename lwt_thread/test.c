@@ -46,5 +46,10 @@ int main(int argc, char argv[]){
 	__lwt_dispatch(test2, test1);
 	printf("Dispatch three\n");
 	printf("%d %d %d\n", a, b, c);
+
+	printf("ID: %d\n",main->id);
+	printf("ID: %d\n",test1->id);
+	printf("ID: %d\n",test2->id);
+
 	printf("Done\n");
 }

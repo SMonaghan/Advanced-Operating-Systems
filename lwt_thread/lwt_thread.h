@@ -7,7 +7,13 @@
 #define STACK_SIZE (4 * 1024)//Size of the stack
 #define LWT_NULL NULL//This is for the scheduling
 
-unsigned int * active_thread_count = 0;
+unsigned int active_thread_count = 0;
+
+typedef enum {
+	RUNNING,
+	WAITING,
+	READY,
+} flag_t;
 
 typedef struct thread {
 	void * stack;
@@ -15,6 +21,7 @@ typedef struct thread {
 	void * sp;
 	struct thread *parent;
 	struct thread *child;
+	flag_t flag;
 	void *value;
 } *lwt_t;
 
@@ -24,7 +31,7 @@ typedef enum {
 	LWT_INFO_NTHD_ZOMBIES,
 } lwt_info_t;
 
-static lwt_t active_thread;
+static lwt_t active_thread = NULL;
 
 void __lwt_schedule(void);
 void __lwt_dispatch(lwt_t next, lwt_t current);
@@ -42,9 +49,10 @@ int lwt_info(lwt_info_t t);
 
 
 int generate_id(void){
-	//active_thread_count = mmap(NULL, sizeof(unsigned int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-	*active_thread_count = *active_thread_count + 1;
-	return *active_thread_count;
+	printf("start\n");
+	active_thread_count = active_thread_count + 1;
+	printf("counter incremented %d \n",active_thread_count);
+	return active_thread_count;
 }
 lwt_t lwt_create(lwt_fn_t fn, void *data){
 	printf("Start\n");	
@@ -53,12 +61,12 @@ lwt_t lwt_create(lwt_fn_t fn, void *data){
 
 	lwt_thd->stack = malloc(STACK_SIZE);
 	printf("Stack Allocated!!!!!!!\n");	
-	lwt_thd->id = 1;//generate_id();
+	lwt_thd->id = generate_id();
 	printf("ID Generated!!!!!!!\n");	
 	lwt_thd->sp = (unsigned int) lwt_thd->stack + STACK_SIZE;
 	printf("Stack Pointer set!!!!!!!\n");	
-	//lwt_thd->parent = lwt_current();
-	//printf("Parent Decided!!!!!!!\n");	
+	lwt_thd->parent = lwt_current();
+	printf("Parent Decided!!!!!!!\n");	
 	lwt_thd->child = NULL;
 	printf("Child Set!!!!!!!\n");	
 	lwt_thd->value = NULL;
@@ -76,7 +84,7 @@ void lwt_die(void * ret){
 }
 
 int lwt_yield(lwt_t thread){
-
+	
 }
 
 lwt_t lwt_current(void){
@@ -102,7 +110,6 @@ void __lwt_schedule(void){
 
 void __lwt_dispatch(lwt_t current, lwt_t next){
 
-	//printf("PUSH START!!!!!!!!!!");
 	asm volatile ("pushl %eax \n\t"
 			"pushl %ebx \n\t"
 			"pushl %ecx \n\t"
@@ -122,8 +129,7 @@ void __lwt_dispatch(lwt_t current, lwt_t next){
 			"popl %ecx \n\t"
 			"popl %ebx \n\t"
 			"popl %eax \n\t");
-	printf("\n");
-	printf("POP DONE!!!!!!!!!!");
+	printf("Seg Fault?");
 }
 
 void * __lwt_stack_get(void){
