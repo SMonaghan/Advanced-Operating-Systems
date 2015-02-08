@@ -18,7 +18,7 @@ struct linked_list{
 
 struct Node{
 	struct Node* next;
-	int available;
+	struct Node* prev;	
 	void * value;
 };
 
@@ -53,8 +53,8 @@ void * __lwt_stack_get(void);
 void __lwt_stack_return(void *stk);
 
 struct linked_list* list_create(void);
-void * stack_assign(struct linked_list* stack);
 void add_stack(struct linked_list* stack, int id);
+void stack_deallocate(void * value);
 
 typedef void *(*lwt_fn_t)(void *);
 lwt_t lwt_create(lwt_fn_t fn, void *data);
@@ -80,7 +80,7 @@ lwt_t lwt_create(lwt_fn_t fn, void *data){
 	printf("Malloced!!!!!!!\n");	
 
 	lwt_thd->id = generate_id();
-	lwt_thd->stack = stack_assign(stk);//stack_start + (STACK_SIZE * (lwt_thd->id));
+	lwt_thd->stack = __lwt_stack_get();
 	printf("Stack Allocated!!!!!!! %u\n",lwt_thd->stack);	
 	//lwt_thd->id = global_id;//generate_id();
 	global_id++;
@@ -184,7 +184,10 @@ void __lwt_trampoline(void){
 }
 
 void * __lwt_stack_get(void){
-	stack_assign(stk);
+	void * ret = stk->head->value;
+	assert(stk->head != NULL);
+	stk->head = stk->head->next;
+	return ret;
 }
 
 void __lwt_stack_return(void *stk){
@@ -207,27 +210,37 @@ struct linked_list* list_create(void){
 }
 
 void add_stack(struct linked_list* stack, int id){
-	struct Node* node = malloc(sizeof(struct Node));
-	node->next = stack->head;
-	if(stack->head == NULL){
-		stack->head = node;
-		stack->tail = node;
+	struct Node* newnode = malloc(sizeof(struct Node));//creates a temp node
+	newnode->next = stack->head;
+	newnode->prev = stack->tail;
+	if (stack->head != NULL){//if there is a  node in the current list, it will set the next node to be the current first node
+		stack->head->prev = newnode;//sets the old first node's prev to the new node
+		stack->tail->next = newnode;//sets the tails next to the new node
+	}else{
+		stack->head = newnode;//sets the head to the new node
 	}
-	stack->head = node;
-	node->value = stack_start + (STACK_SIZE * id);
-	node->available = 0;
+	stack->tail = newnode;//sets the new node to the free node
+	newnode->value = stack_start + (STACK_SIZE * id);
 }
 
-void * stack_assign(struct linked_list* stack){
-	void * ret = stack->head->value;
-	assert(stack->head->available == 0);
-	/*if(stack->head->available != 0){
-		return -1;
-	}*/
-	stack->head->available = 1;
-	stack->tail->next = stack->head;
-	stack->head = stack->head->next;
-	stack->tail->next = NULL;
-	return ret;
-}
+/*
+void stack_deallocate(void * value){
+	struct Node* search = malloc(sizeof(struct Node));
+	search = stk->tail;//sets search to the head of the list
 
+	if(stk->tail == NULL){//this means the list is empty
+		printf("This list is empty\n");
+		return 0;
+	}
+	while(search->value != value && search->prev != stk->head && search->available == 1){//this traverses the list looking for the value
+		search = search->prev;
+	}
+	if(search->value != value) return 0;
+	if(stk->tail == search) stk->tail = search->prev;
+	search->next->prev = search->prev;
+	search->prev->next = search->next;
+	search->next = stk->head;
+	stk->head = search;
+	return;
+
+}*/
