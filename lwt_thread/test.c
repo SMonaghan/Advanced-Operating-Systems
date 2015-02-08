@@ -7,8 +7,9 @@ void * demo_func(void *d){
 }
 
 int main(int argc, char argv[]){
-
+	
 	printf("start\n");
+	stack_create();
 	lwt_t main = lwt_create(demo_func, NULL);
 	main->flag = RUNNING;
 	printf("%c",main->flag);
