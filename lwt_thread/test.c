@@ -10,6 +10,8 @@ int main(int argc, char argv[]){
 
 	printf("start\n");
 	lwt_t main = lwt_create(demo_func, NULL);
+	main->flag = RUNNING;
+	printf("%c",main->flag);
 	printf("main created\n");
 	lwt_t test1 = lwt_create(demo_func, NULL);
 	lwt_t test2 = lwt_create(demo_func, NULL);
