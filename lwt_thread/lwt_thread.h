@@ -7,7 +7,6 @@
 #define STACK_SIZE (8 * 4096)//Size of the stack
 #define LWT_NULL NULL//This is for the scheduling
 #define STACK_COUNT 256
-unsigned int active_thread_count = 0;
 unsigned int global_id = 0;
 void * stack_start;
 
@@ -34,9 +33,16 @@ typedef struct thread {
 	void * sp;
 	struct thread *parent;
 	struct thread *child;
+	struct thread *next;
+	struct thread *prev;
 	flag_t flag;
 	void *value;
 } *lwt_t;
+
+struct queue{
+	struct thread *head;
+	struct thread *tail;
+};
 
 typedef enum {
 	LWT_INFO_NTHD_RUNNABLE,
@@ -66,27 +72,21 @@ int lwt_yield(lwt_t thread);
 int lwt_id(lwt_t thread);
 int lwt_info(lwt_info_t t);
 
-struct linked_list* stk;// = malloc(sizeof(struct linked_list));
+struct linked_list* stk;
+struct queue* run_queue;
+struct thread* look_thread;
 
-int generate_id(void){
-	printf("start\n");
-	active_thread_count = active_thread_count + 1;
-	printf("counter incremented %d \n",active_thread_count);
-	return active_thread_count;
-}
 lwt_t lwt_create(lwt_fn_t fn, void *data){
 	printf("Start\n");	
 	lwt_t lwt_thd = malloc(sizeof(struct thread));
 	printf("Malloced!!!!!!!\n");	
 
-	lwt_thd->id = generate_id();
+	lwt_thd->id = global_id;
 	lwt_thd->stack = __lwt_stack_get();
 	printf("Stack Allocated!!!!!!! %u\n",lwt_thd->stack);	
-	//lwt_thd->id = global_id;//generate_id();
 	global_id++;
 	printf("ID Generated!!!!!!!\n");
 	void* sp = lwt_thd->stack + STACK_SIZE;
-	//lwt_thd->sp = (unsigned int) lwt_thd->stack + STACK_SIZE;
 
 	*((int*) sp-1) = __lwt_trampoline;
 	*((int*) sp-2) = sp;
@@ -99,8 +99,17 @@ lwt_t lwt_create(lwt_fn_t fn, void *data){
 	lwt_thd->child = NULL;
 	printf("Child Set!!!!!!!\n");	
 	lwt_thd->value = NULL;
-	printf("Value Set!!!!!!!\n");	
-
+	printf("Value Set!!!!!!!\n");
+	lwt_thd->flag = RUNNING;
+	if(run_queue->tail != NULL){
+	       run_queue->tail->next = lwt_thd;
+	       lwt_thd->prev = run_queue->tail;
+	}
+	run_queue->tail = lwt_thd;
+	if(run_queue->head == NULL){
+	       run_queue->head = lwt_thd;
+	}
+		
 	return lwt_thd;
 
 }
@@ -114,11 +123,35 @@ void lwt_die(void * ret){
 }
 
 int lwt_yield(lwt_t thread){
+	assert(thread != lwt_current());
+	if(thread == LWT_NULL){
+	       __lwt_schedule;
+	       return 1;
+	}
+	__lwt_dispatch(run_queue->head, thread);
+	
+	thread->prev->next = thread->next;//move thread out of queue
+	thread->next->prev = thread->prev;//move thread out of queue
+	/*thread is now out of the queue*/
+
+	thread->next = run_queue->head->next;//sets the next of thread to the thread following the old head
+	thread->next->prev = thread;//sets the second in the queue's prev to the this thread
+	/*thread is now the head in all but name*/
+
+	run_queue->tail->next = run_queue->head;//sets the tail's next to the old current making it new tail in all but title
+	run_queue->head->prev = run_queue->tail;//sets the old currents prev to the old tail
+	run_queue->tail = run_queue->head;//sets the title of tail to the old/ current head
+	run_queue->head->next = NULL;//sets the old currents next to null so it no longer points anywhere the only thing refering to it is run_queue->head
+	/*the old head is now the tail*/
+
+	run_queue->head = thread;//sets the head to the thread
+	/*thread is now the head of the queue*/
+
 
 }
 
 lwt_t lwt_current(void){
-	return active_thread;
+	return run_queue->head;
 }
 
 int lwt_id(lwt_t thread){
@@ -130,12 +163,12 @@ int lwt_info(lwt_info_t t){
 }
 
 void __lwt_schedule(void){
-	lwt_t next_thread = active_thread;
-	/*next_thread = ?*/
-	/*put stuff here*/
-	active_thread = next_thread;
-
-
+	__lwt_dispatch(run_queue->head, run_queue->head->next);
+	run_queue->tail->next = run_queue->head;
+	run_queue->head->prev = run_queue->tail;
+	run_queue->tail = run_queue->head;
+	run_queue->head = run_queue->head->next;
+	run_queue->tail->next = NULL;
 }
 
 void __lwt_dispatch(lwt_t current, lwt_t next){
@@ -197,6 +230,8 @@ void __lwt_stack_return(void *stk){
 void * stack_create(void){
 	stack_start = aligned_alloc(STACK_SIZE, STACK_SIZE * STACK_COUNT);
 	stk = malloc(sizeof(struct linked_list));
+	run_queue = malloc(sizeof(struct queue));
+	look_thread = malloc(sizeof(struct thread));
 	int i = 1;
 	for (i; i < STACK_COUNT; i++){
 		add_stack(stk, i);
@@ -211,10 +246,8 @@ struct linked_list* list_create(void){
 
 void add_stack(struct linked_list* stack, int id){
 	struct Node* newnode = malloc(sizeof(struct Node));//creates a temp node
-	newnode->next = stack->head;
-	newnode->prev = stack->tail;
 	if (stack->head != NULL){//if there is a  node in the current list, it will set the next node to be the current first node
-		stack->head->prev = newnode;//sets the old first node's prev to the new node
+		//stack->head->prev = newnode;//sets the old first node's prev to the new node
 		stack->tail->next = newnode;//sets the tails next to the new node
 	}else{
 		stack->head = newnode;//sets the head to the new node
@@ -223,24 +256,3 @@ void add_stack(struct linked_list* stack, int id){
 	newnode->value = stack_start + (STACK_SIZE * id);
 }
 
-/*
-void stack_deallocate(void * value){
-	struct Node* search = malloc(sizeof(struct Node));
-	search = stk->tail;//sets search to the head of the list
-
-	if(stk->tail == NULL){//this means the list is empty
-		printf("This list is empty\n");
-		return 0;
-	}
-	while(search->value != value && search->prev != stk->head && search->available == 1){//this traverses the list looking for the value
-		search = search->prev;
-	}
-	if(search->value != value) return 0;
-	if(stk->tail == search) stk->tail = search->prev;
-	search->next->prev = search->prev;
-	search->prev->next = search->next;
-	search->next = stk->head;
-	stk->head = search;
-	return;
-
-}*/
