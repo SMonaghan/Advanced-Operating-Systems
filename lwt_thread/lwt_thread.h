@@ -59,7 +59,7 @@ void * __lwt_stack_get(void);
 void __lwt_stack_return(void *stk);
 
 struct linked_list* list_create(void);
-void add_stack(struct linked_list* stack, int id);
+void add_stack(struct linked_list* stack, void * val);
 void stack_deallocate(void * value);
 
 typedef void *(*lwt_fn_t)(void *);
@@ -217,13 +217,17 @@ void __lwt_trampoline(void){
 }
 
 void * __lwt_stack_get(void){
-	void * ret = stk->head->value;
 	assert(stk->head != NULL);
+	void * ret = stk->head->value;
 	stk->head = stk->head->next;
 	return ret;
 }
 
-void __lwt_stack_return(void *stk){
+void __lwt_stack_return(void *stck){
+	lwt_t cur = lwt_current();
+	run_queue->head = run_queue->head->next;
+	run_queue->head->prev = NULL;
+	add_stack(stk, cur->stack);
 
 }
 
@@ -234,7 +238,7 @@ void * stack_create(void){
 	look_thread = malloc(sizeof(struct thread));
 	int i = 1;
 	for (i; i < STACK_COUNT; i++){
-		add_stack(stk, i);
+		add_stack(stk, (stack_start + (STACK_SIZE * i)));
 	}
 	return stack_start;
 }
@@ -244,7 +248,7 @@ struct linked_list* list_create(void){
 	return stk;
 }
 
-void add_stack(struct linked_list* stack, int id){
+void add_stack(struct linked_list* stack, void * val){
 	struct Node* newnode = malloc(sizeof(struct Node));//creates a temp node
 	if (stack->head != NULL){//if there is a  node in the current list, it will set the next node to be the current first node
 		//stack->head->prev = newnode;//sets the old first node's prev to the new node
@@ -253,6 +257,6 @@ void add_stack(struct linked_list* stack, int id){
 		stack->head = newnode;//sets the head to the new node
 	}
 	stack->tail = newnode;//sets the new node to the free node
-	newnode->value = stack_start + (STACK_SIZE * id);
+	newnode->value = val;
 }
 
