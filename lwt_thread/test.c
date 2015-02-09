@@ -7,22 +7,21 @@ void * demo_func(void *d){
 }
 
 int main(int argc, char argv[]){
-	
+
 	printf("start\n");
-	stack_create();
-	lwt_t main = lwt_create(demo_func, NULL);
-	main->flag = RUNNING;
-	printf("%c",main->flag);
-	printf("main created\n");
+	__lwt_stack_create();
+	lwt_t maint = lwt_create(demo_func, NULL);
+	int g = 2;
+	printf("main created %d\n", &g);
 	lwt_t test1 = lwt_create(demo_func, NULL);
 	lwt_t test2 = lwt_create(demo_func, NULL);
 
-	printf("all created!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
-	
+	printf("all created %d %d %d\n", lwt_id(maint), lwt_id(test1), lwt_id(test2));
+
 	//test1->stack = malloc(4096);
 	//test2->stack = malloc(4096);
-	
-	__lwt_dispatch(main, test1);
+
+	__lwt_dispatch(maint, test1);
 
 	printf("Dispatch one\n");
 	int a = 5;
@@ -49,10 +48,5 @@ int main(int argc, char argv[]){
 	__lwt_dispatch(test2, test1);
 	printf("Dispatch three\n");
 	printf("%d %d %d\n", a, b, c);
-
-	printf("ID: %d\n",main->id);
-	printf("ID: %d\n",test1->id);
-	printf("ID: %d\n",test2->id);
-
 	printf("Done\n");
 }
