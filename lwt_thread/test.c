@@ -10,11 +10,9 @@ int main(int argc, char argv[]){
 
 	printf("start\n");
 	__lwt_stack_create();
-	lwt_t maint = lwt_create(demo_func, NULL);
-	int g = 2;
-	printf("main created %d\n", &g);
 	lwt_t test1 = lwt_create(demo_func, NULL);
 	lwt_t test2 = lwt_create(demo_func, NULL);
+	lwt_t maint = lwt_create(demo_func, NULL);
 
 	printf("all created %d %d %d\n", lwt_id(maint), lwt_id(test1), lwt_id(test2));
 
