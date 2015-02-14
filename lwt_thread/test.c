@@ -1,50 +1,177 @@
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+
 #include "lwt_thread.h"
 
-void * demo_func(void *d){
-	return 90;
+#define rdtscll(val) __asm__ __volatile__("rdtsc" : "=A" (val))
+
+#define ITER 10000
+
+/* 
+* My output on an Intel Core i5-2520M CPU @ 2.50GHz:
+*
+* [PERF] 120 <- fork/join
+* [PERF] 13 <- yield
+* [TEST] thread creation/join/scheduling
+*/
+
+void *
+fn_bounce(void *d) 
+{
+	int i;
+	unsigned long long start, end;
+
+	lwt_yield(LWT_NULL);
+	lwt_yield(LWT_NULL);
+	rdtscll(start);
+	for (i = 0 ; i < ITER ; i++) lwt_yield(LWT_NULL);
+	rdtscll(end);
+	lwt_yield(LWT_NULL);
+	lwt_yield(LWT_NULL);
+
+	if (!d) printf("[PERF] %5lld <- yield\n", (end-start)/(ITER*2));
+
+	return NULL;
 }
 
-int main(int argc, char argv[]){
+void *
+fn_null(void *d)
+{ return NULL; }
 
-	printf("start\n");
-	__lwt_stack_create();
-	lwt_t test1 = lwt_create(demo_func, NULL);
-	lwt_t test2 = lwt_create(demo_func, NULL);
-	lwt_t maint = lwt_create(demo_func, NULL);
+#define IS_RESET()						\
+	assert( lwt_info(LWT_INFO_NTHD_RUNNABLE) == 1 &&	\
+			lwt_info(LWT_INFO_NTHD_ZOMBIES) == 0 &&		\
+			lwt_info(LWT_INFO_NTHD_BLOCKED) == 0)
 
-	printf("all created %d %d %d\n", lwt_id(maint), lwt_id(test1), lwt_id(test2));
+void
+test_perf(void)
+{
+	lwt_t chld1, chld2;
+	int i;
+	unsigned long long start, end;
 
-	//test1->stack = malloc(4096);
-	//test2->stack = malloc(4096);
 
-	__lwt_dispatch(maint, test1);
+	/* Performance tests */
+	rdtscll(start);
+	for (i = 0 ; i < ITER ; i++) {
+		chld1 = lwt_create(fn_null, NULL);
+		lwt_join(chld1);
+	}
+	rdtscll(end);
+	printf("[PERF] %5lld <- fork/join\n", (end-start)/ITER);
+	IS_RESET();
 
-	printf("Dispatch one\n");
-	int a = 5;
-	int b = 10;
-	int c = a*b;
+	chld1 = lwt_create(fn_bounce, (void*)1);
+	chld2 = lwt_create(fn_bounce, NULL);
+	lwt_join(chld1);
+	lwt_join(chld2);
+	IS_RESET();
+}
 
-	for(a=5; a<10; a++){
-		c+=b;
+void *
+fn_identity(void *d)
+{ return d; }
+
+void *
+fn_nested_joins(void *d)
+{
+	lwt_t chld;
+
+	if (d) {
+		lwt_yield(LWT_NULL);
+		lwt_yield(LWT_NULL);
+		assert(lwt_info(LWT_INFO_NTHD_RUNNABLE) == 1);
+		lwt_die(NULL);
+	}
+	chld = lwt_create(fn_nested_joins, (void*)1);
+	lwt_join(chld);
+}
+
+volatile int sched[2] = {0, 0};
+volatile int curr = 0;
+
+void *
+fn_sequence(void *d)
+{
+	int i, other, val = (int)d;
+
+	for (i = 0 ; i < ITER ; i++) {
+		other = curr;
+		curr  = (curr + 1) % 2;
+		sched[curr] = val;
+		assert(sched[other] != val);
+		lwt_yield(LWT_NULL);
 	}
 
-	printf("%d %d %d\n", a, b, c);
-	__lwt_dispatch(test1, test2);
+	return NULL;
+}
 
-	printf("Dispatch two\n");
-	int x = 5;
-	int y = 10;
-	int z = a*b;
+void *
+fn_join(void *d)
+{
+	lwt_t t = (lwt_t)d;
+	void *r;
 
-	for(x=5; x<10; x++){
-		z+=y;
-	}
-	printf("%d %d %d\n", x, y, z);
+	r = lwt_join(d);
+	assert(r != (void*)0x37337);
+}
 
-	__lwt_dispatch(test2, test1);
-	printf("Dispatch three\n");
-	printf("%d %d %d\n", a, b, c);
-	printf("Done\n");
+void
+test_crt_join_sched(void)
+{
+	lwt_t chld1, chld2;
+
+	printf("[TEST] thread creation/join/scheduling\n");
+
+	/* functional tests: scheduling */
+	lwt_yield(LWT_NULL);
+
+	chld1 = lwt_create(fn_sequence, (void*)1);
+	chld2 = lwt_create(fn_sequence, (void*)2);
+	lwt_join(chld2);
+	lwt_join(chld1);	
+	IS_RESET();
+
+	/* functional tests: join */
+	chld1 = lwt_create(fn_null, NULL);
+	lwt_join(chld1);
+	IS_RESET();
+
+	chld1 = lwt_create(fn_null, NULL);
+	lwt_yield(LWT_NULL);
+	lwt_join(chld1);
+	IS_RESET();
+
+	chld1 = lwt_create(fn_nested_joins, NULL);
+	lwt_join(chld1);
+	IS_RESET();
+	/* functional tests: join only from parents */
+	/*chld1 = lwt_create(fn_identity, (void*)0x37337);
+	*chld2 = lwt_create(fn_join, chld1);
+	*lwt_yield(LWT_NULL);
+	*lwt_yield(LWT_NULL);
+	*lwt_join(chld2);
+	*lwt_join(chld1);
+	*IS_RESET();*/
+
+	/* functional tests: passing data between threads */
+	chld1 = lwt_create(fn_identity, (void*)0x37337);
+	assert((void*)0x37337 == lwt_join(chld1));
+	IS_RESET();
+	/* functional tests: directed yield */
+	chld1 = lwt_create(fn_null, NULL);
+	lwt_yield(chld1);
+	assert(lwt_info(LWT_INFO_NTHD_ZOMBIES) == 1);
+	lwt_join(chld1);
+	IS_RESET();
+}
+
+int
+main(void)
+{
+	test_perf();
+	test_crt_join_sched();
+
+	return 0;
 }

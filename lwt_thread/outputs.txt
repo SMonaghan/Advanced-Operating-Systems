@@ -1,0 +1,22 @@
+➜  lwt_thread git:(master) ✗ ./thread 
+[PERF]   155 <- fork/join
+[PERF]    43 <- yield
+[TEST] thread creation/join/scheduling
+➜  lwt_thread git:(master) ✗ ./thread 
+[PERF]   499 <- fork/join
+[PERF]   160 <- yield
+[TEST] thread creation/join/scheduling
+➜  lwt_thread git:(master) ✗ ./thread 
+[PERF]   411 <- fork/join
+[PERF]   116 <- yield
+[TEST] thread creation/join/scheduling
+➜  lwt_thread git:(master) ✗ ./thread 
+[PERF]   395 <- fork/join
+[PERF]   118 <- yield
+[TEST] thread creation/join/scheduling
+➜  lwt_thread git:(master) ✗ ./thread 
+[PERF]   148 <- fork/join
+[PERF]    45 <- yield
+[TEST] thread creation/join/scheduling
+➜  lwt_thread git:(master) ✗ 
+
