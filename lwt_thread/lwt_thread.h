@@ -3,7 +3,7 @@
 #include <assert.h>
 
 #define STACK_SIZE (8 * 4096)//Size of the stack
-#define LWT_NULL NULL//This is for the scheduling
+#define LWT_NULL (-1)//This is for the scheduling
 #define MAX_THREADS 256
 
 typedef void *(*lwt_fn_t)(void *);
@@ -11,7 +11,8 @@ typedef void *(*lwt_fn_t)(void *);
 typedef struct thread {
 	unsigned int id;
 	struct thread *next, *prev, *joinlist;
-	void *sp, *param, *ret, *joinret;
+	volatile void *sp, *joinret;
+	void *param, *ret;
 	lwt_fn_t function;
 } *lwt_t;
 
@@ -22,7 +23,7 @@ typedef enum {
 } lwt_info_t;
 
 static volatile lwt_t rq_head, rq_tail;
-static lwt_t pool_head;
+static volatile lwt_t pool_head;
 static int NUM_ACTIVE=0, NUM_BLOCKED=0, NUM_ZOMB=0;
 static unsigned int global_id = 1;
 
@@ -49,26 +50,20 @@ void __attribute__ ((constructor)) init(){
 }
 
 static lwt_t lwt_create(lwt_fn_t fn, void *data){
-	//printf("Start\n");	
 	lwt_t lwt_thd = __lwt_stack_get();
-	//printf("Thread Allocated!!!!!!! %u\n", lwt_thd);	
 	lwt_thd->id = global_id;
 	global_id++;
-	//printf("ID Generated!!!!!!! %u\n", lwt_thd->id);
 	void* sp = (int) lwt_thd + STACK_SIZE-4;
 
 	lwt_thd->param = data;
 	lwt_thd->function = fn;
-	lwt_thd->ret = -1;
+	lwt_thd->ret = LWT_NULL;
 	lwt_thd->joinlist = NULL;
 
-	//printf("more data set, sp at %u\n", sp);
 	*((int*) sp-1) = __lwt_trampoline;
 	*((int*) sp-2) = sp;
 
-	//printf("two things on the stack %u: %u at %u and %u at %u\n", sp, *((int*) sp-1), (int*)sp-1,  *((int*) sp-2), (int*)sp-2);
 	lwt_thd->sp = sp-4;
-	//printf("Stack Pointer set!!!!!!!\n");	
 
 	lwt_thd->next = NULL;
 	if(rq_head == NULL){
@@ -79,18 +74,15 @@ static lwt_t lwt_create(lwt_fn_t fn, void *data){
 	}
 	NUM_ACTIVE++;
 	rq_tail = lwt_thd;
-
 	return lwt_thd;
 }
 
 static void * lwt_join(lwt_t thread){
 	lwt_t current = lwt_current();
-	//printf("%u, id %u joining %u\n", current, current->id, thread);
-	//assert(current->next!=NULL);
 	assert(rq_head==current);
 	if(current == thread) return NULL;
-	if(thread->ret!=-1){	
-		//printf("Zombie put down, got %u!\n", thread->ret);
+
+	if(thread->ret!=LWT_NULL){	
 		NUM_ZOMB--;
 		__lwt_stack_return(thread);
 		return thread->ret;
@@ -115,28 +107,23 @@ static void lwt_die(void * ret){
 		rq_tail->next = NULL;
 		NUM_BLOCKED--;
 		NUM_ACTIVE++;
-		//printf("dying\n");
 
-	}else{
-		NUM_ZOMB++;
-		// printf("brainsssss\n");
-	}
+	} else NUM_ZOMB++;
 	if(rq_head->next == NULL){
-		//printf("All done\n");
 		exit(0);
 	}
-	assert(rq_head == current);
+	assert(rq_head==current);
 	rq_head = rq_head->next;
 	rq_head->prev = NULL;
 	NUM_ACTIVE--;
-	if(current->joinlist != NULL) __lwt_stack_return(current);
+	if(current->joinlist!=NULL) __lwt_stack_return(current);
 	__lwt_schedule();
 }
 
 static int lwt_yield(lwt_t thread){
 	lwt_t current = lwt_current();
+	if(thread == current || current->next == NULL)  return 1; 
 
-	if(thread == current || current->next == NULL) return 1;
 	rq_head = current->next;
 	rq_head->prev = NULL;
 	rq_tail->next = current;
@@ -145,7 +132,7 @@ static int lwt_yield(lwt_t thread){
 	current->next = NULL;
 
 	if(thread != LWT_NULL && thread!= rq_head){
-		if(thread->id < 1 || thread->id > global_id) return 0;
+		if(thread->ret!=LWT_NULL) return 0;
 
 		if(thread!=rq_tail){
 			thread->prev->next = thread->next;
@@ -159,14 +146,11 @@ static int lwt_yield(lwt_t thread){
 		thread->next = rq_head;
 		rq_head = thread;
 	}
-	/*******************************/
-	//printf("I yield, next is %u!\n", rq_head);
 	__lwt_schedule();	
 }
 
 static inline lwt_t lwt_current(void){
 	unsigned int offset;
-	//printf("%u to %u with %u\n", &offset, ret, (unsigned int) &offset % STACK_SIZE);
 	return (unsigned int) &offset - ((unsigned int) &offset % STACK_SIZE);
 }
 
@@ -182,14 +166,11 @@ static inline int lwt_info(lwt_info_t t){
 }
 
 static inline void __lwt_schedule(void){
-	assert(rq_head != NULL);
+	assert(rq_head!=NULL);
 	__lwt_dispatch(lwt_current(), rq_head);
 }
 
-static volatile inline void __lwt_dispatch(lwt_t current, lwt_t next){
-
-
-	/***********************************/
+static inline void __lwt_dispatch(lwt_t current, lwt_t next){
 
 	asm volatile (	"pushl %ebp \n\t"
 			"pushl %eax \n\t"
@@ -200,14 +181,16 @@ static volatile inline void __lwt_dispatch(lwt_t current, lwt_t next){
 			"pushl %edi \n\t"
 			"push $1f \n\t" );
 
-	asm volatile (	"movl %%esp, %0 \n\t"
-			"movl %1, %%esp \n\t"
-			:"=g" (current->sp)
+	asm volatile(	"movl %%esp, %%eax \n\t"
+			"movl %%eax, %%edx \n\t"
+			"and $0xffff8000, %%edx \n\t"
+			"movl %%eax, 0x10(%%edx) \n\t"
+			"movl %0, %%esp \n\t"
+			:	
 			:"g" (next->sp)
-			:"memory", "%esp");
+			:"memory", "%esp", "%eax", "%edx");
 
-	asm volatile ("popl %edi \n\t"
-			"jmp %edi\n\n"
+	asm volatile (	"ret \n\n"
 			"1: \n\t"
 			"popl %edi \n\t"
 			"popl %esi \n\t"
@@ -216,31 +199,12 @@ static volatile inline void __lwt_dispatch(lwt_t current, lwt_t next){
 			"popl %ebx \n\t"
 			"popl %eax \n\t"
 			"popl %ebp \n\t");
-
-	//should stop here
-	/*asm volatile("movl %%esp, %0 \n\t"
-	*"mov %%edi, %1 \n\t"
-	*: "=r" (i), "=r" (j)
-	*: : );
-	*printf("stack pointer: %u, edi: %d\n", i, j);*/
-
-
-	//assert(0);
-	//asm volatile("jmp %edi\n\t");
-
-	//printf("\n");
-	//printf("POP DONE!!!!!!!!!!");
 }
 
 static volatile void __lwt_trampoline(void){
-	//printf("boing\n");
-	lwt_t current = lwt_current();
+	volatile lwt_t current = lwt_current();
 
-	/**********************************/
-	//printf("boinging %d on %u to %d\n", current->id, current, current->function);
 	current->ret = current->function(current->param);
-
-	//printf("got %d\n", current->ret);
 	lwt_die(current->ret);
 	assert(0);
 }
