@@ -6,7 +6,7 @@
 
 #define rdtscll(val) __asm__ __volatile__("rdtsc" : "=A" (val))
 
-#define ITER 10000
+#define ITER 1000000
 
 /* 
 * My output on an Intel Core i5-2520M CPU @ 2.50GHz:

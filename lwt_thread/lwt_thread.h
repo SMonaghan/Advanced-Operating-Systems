@@ -23,22 +23,21 @@ typedef enum {
 } lwt_info_t;
 
 static volatile lwt_t rq_head, rq_tail;
-static volatile lwt_t pool_head;
-static int NUM_ACTIVE=0, NUM_BLOCKED=0, NUM_ZOMB=0;
+static lwt_t pool_head;
 static unsigned int global_id = 1;
 
 static inline void __lwt_schedule(void);
 static volatile void __lwt_trampoline(void);
-static inline void __lwt_dispatch(lwt_t next, lwt_t current);
-static void * __lwt_stack_get(void);
-static void __lwt_stack_return(void *stk);
+static inline void __lwt_dispatch(lwt_t next);
+static inline void * __lwt_stack_get(void);
+static inline void __lwt_stack_return(void *stk);
 static void __lwt_stack_create(void);
 
 static lwt_t lwt_create(lwt_fn_t fn, void *data);
 static inline lwt_t lwt_current(void);
 static void * lwt_join(lwt_t thread);
 static void lwt_die(void * ret);
-static int lwt_yield(lwt_t thread);
+static inline int lwt_yield(lwt_t thread);
 static inline int lwt_id(lwt_t thread);
 static inline int lwt_info(lwt_info_t t);
 int main(void);
@@ -54,7 +53,7 @@ static lwt_t lwt_create(lwt_fn_t fn, void *data){
 	lwt_thd->id = global_id;
 	global_id++;
 	void* sp = (int) lwt_thd + STACK_SIZE-4;
-
+	
 	lwt_thd->param = data;
 	lwt_thd->function = fn;
 	lwt_thd->ret = LWT_NULL;
@@ -72,7 +71,6 @@ static lwt_t lwt_create(lwt_fn_t fn, void *data){
 		rq_tail->next = lwt_thd;
 		lwt_thd->prev = rq_tail;
 	}
-	NUM_ACTIVE++;
 	rq_tail = lwt_thd;
 	return lwt_thd;
 }
@@ -81,9 +79,8 @@ static void * lwt_join(lwt_t thread){
 	lwt_t current = lwt_current();
 	assert(rq_head==current);
 	if(current == thread) return NULL;
-
+	
 	if(thread->ret!=LWT_NULL){	
-		NUM_ZOMB--;
 		__lwt_stack_return(thread);
 		return thread->ret;
 	}
@@ -91,8 +88,6 @@ static void * lwt_join(lwt_t thread){
 	rq_head->prev = NULL;
 	current->next = thread->joinlist;
 	thread->joinlist = current;
-	NUM_ACTIVE--;
-	NUM_BLOCKED++;
 	__lwt_schedule();
 	return current->joinret;
 }
@@ -105,23 +100,21 @@ static void lwt_die(void * ret){
 		current->joinlist->joinret = ret;
 		rq_tail = current->joinlist;
 		rq_tail->next = NULL;
-		NUM_BLOCKED--;
-		NUM_ACTIVE++;
 
-	} else NUM_ZOMB++;
+	}
 	if(rq_head->next == NULL){
 		exit(0);
 	}
 	assert(rq_head==current);
 	rq_head = rq_head->next;
 	rq_head->prev = NULL;
-	NUM_ACTIVE--;
 	if(current->joinlist!=NULL) __lwt_stack_return(current);
 	__lwt_schedule();
 }
 
-static int lwt_yield(lwt_t thread){
+static inline int lwt_yield(lwt_t thread){
 	lwt_t current = lwt_current();
+	assert(current == rq_head);
 	if(thread == current || current->next == NULL)  return 1; 
 
 	rq_head = current->next;
@@ -133,7 +126,7 @@ static int lwt_yield(lwt_t thread){
 
 	if(thread != LWT_NULL && thread!= rq_head){
 		if(thread->ret!=LWT_NULL) return 0;
-
+		
 		if(thread!=rq_tail){
 			thread->prev->next = thread->next;
 			thread->next->prev = thread->prev;
@@ -151,7 +144,7 @@ static int lwt_yield(lwt_t thread){
 
 static inline lwt_t lwt_current(void){
 	unsigned int offset;
-	return (unsigned int) &offset - ((unsigned int) &offset % STACK_SIZE);
+	return ((int) &offset & 0xffff8000);
 }
 
 static inline int lwt_id(lwt_t thread){
@@ -159,18 +152,33 @@ static inline int lwt_id(lwt_t thread){
 }
 
 static inline int lwt_info(lwt_info_t t){
-	if(t == LWT_INFO_NTHD_RUNNABLE) return NUM_ACTIVE;
-	if(t == LWT_INFO_NTHD_BLOCKED) return NUM_BLOCKED;
-	if(t == LWT_INFO_NTHD_ZOMBIES) return NUM_ZOMB;
+	
+	lwt_t temp = rq_head;
+	int active=0, blocked=0, dead=0;
+
+	while(temp!=NULL){
+		if(temp->joinlist!=NULL) blocked++;
+		active++;
+		temp = temp->next;
+	}
+	temp = pool_head;
+	while(temp!=NULL){
+		dead++;
+		temp = temp->next;
+	}
+
+	if(t == LWT_INFO_NTHD_RUNNABLE) return active;
+	if(t == LWT_INFO_NTHD_BLOCKED) return blocked;
+	if(t == LWT_INFO_NTHD_ZOMBIES) return MAX_THREADS-dead-blocked-active;
 	return 0; 
 }
 
 static inline void __lwt_schedule(void){
 	assert(rq_head!=NULL);
-	__lwt_dispatch(lwt_current(), rq_head);
+	__lwt_dispatch(rq_head);
 }
 
-static inline void __lwt_dispatch(lwt_t current, lwt_t next){
+static inline void __lwt_dispatch(lwt_t next){
 
 	asm volatile (	"pushl %ebp \n\t"
 			"pushl %eax \n\t"
@@ -190,6 +198,12 @@ static inline void __lwt_dispatch(lwt_t current, lwt_t next){
 			:"g" (next->sp)
 			:"memory", "%esp", "%eax", "%edx");
 
+	/*asm volatile( 	"movl %%esp, %0 \n\t"
+			"movl %1, %%esp \n\t"
+			: "=g" (current->sp)
+			: "g" (next->sp)
+			: "memory", "%esp");*/
+	
 	asm volatile (	"ret \n\n"
 			"1: \n\t"
 			"popl %edi \n\t"
@@ -208,7 +222,7 @@ static volatile void __lwt_trampoline(void){
 	lwt_die(current->ret);
 	assert(0);
 }
-static void * __lwt_stack_get(void){
+static inline void * __lwt_stack_get(void){
 	if(pool_head==NULL){
 		printf("OUT OF FREE THREADS!\n");
 		return NULL;
@@ -218,7 +232,7 @@ static void * __lwt_stack_get(void){
 	return ret;
 }
 
-static void __lwt_stack_return(void *stk){
+static inline void __lwt_stack_return(void *stk){
 	lwt_t ret = stk;
 	ret->next = pool_head;
 	ret->prev = NULL;
