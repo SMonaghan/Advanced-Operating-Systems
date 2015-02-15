@@ -56,7 +56,6 @@ static lwt_t lwt_create(lwt_fn_t fn, void *data){
 	global_id++;
 	//printf("ID Generated!!!!!!! %u\n", lwt_thd->id);
 	void* sp = (int) lwt_thd + STACK_SIZE-4;
-	//lwt_thd->sp = (unsigned int) lwt_thd->stack + STACK_SIZE;
 
 	lwt_thd->param = data;
 	lwt_thd->function = fn;
@@ -70,8 +69,6 @@ static lwt_t lwt_create(lwt_fn_t fn, void *data){
 	//printf("two things on the stack %u: %u at %u and %u at %u\n", sp, *((int*) sp-1), (int*)sp-1,  *((int*) sp-2), (int*)sp-2);
 	lwt_thd->sp = sp-4;
 	//printf("Stack Pointer set!!!!!!!\n");	
-	//lwt_thd->ret = NULL;
-	//printf("Value Set!!!!!!!\n");	
 
 	lwt_thd->next = NULL;
 	if(rq_head == NULL){
@@ -81,25 +78,13 @@ static lwt_t lwt_create(lwt_fn_t fn, void *data){
 		lwt_thd->prev = rq_tail;
 	}
 	NUM_ACTIVE++;
-	//printf("Thread %u, id %u, prev %u, next %u, rq_head %u, rq_tail %u\n", lwt_thd, lwt_thd->id, lwt_thd->prev, lwt_thd->next, rq_head, rq_tail);
 	rq_tail = lwt_thd;
 
-	/*lwt_t temp = rq_head;
-	*while(temp!=NULL){
-	*printf("rq %u %u\n", temp->id, temp);
-	*temp = temp->next;
-	*}*/
-	//if(active == NULL) active = lwt_thd;
 	return lwt_thd;
 }
 
 static void * lwt_join(lwt_t thread){
 	lwt_t current = lwt_current();
-	/*lwt_t temp = current;
-	*while(temp!=NULL){
-	*printf("rq %u %u\n", temp->id, temp);
-	*temp = temp->next;
-	*}*/
 	//printf("%u, id %u joining %u\n", current, current->id, thread);
 	//assert(current->next!=NULL);
 	assert(rq_head==current);
@@ -117,7 +102,6 @@ static void * lwt_join(lwt_t thread){
 	NUM_ACTIVE--;
 	NUM_BLOCKED++;
 	__lwt_schedule();
-	//printf("back in action with %d\n", current->joinret);
 	return current->joinret;
 }
 
@@ -126,19 +110,9 @@ static void lwt_die(void * ret){
 	if(current->joinlist!=NULL){
 		rq_tail->next = current->joinlist;
 		current->joinlist->prev = rq_tail;
-		/*while(current->joinlist->next!=NULL){
-		*current->joinlist->joinret = ret;
-		*current->joinlist->next->prev = current->joinlist;
-		*current->joinlist=current->joinlist->next;
-		*}*/
 		current->joinlist->joinret = ret;
 		rq_tail = current->joinlist;
 		rq_tail->next = NULL;
-		/*lwt_t temp = rq_head;
-		*while(temp!=NULL){
-		*printf("rq %u %u\n", temp->id, temp);
-		*temp = temp->next;
-		*}*/
 		NUM_BLOCKED--;
 		NUM_ACTIVE++;
 		//printf("dying\n");
@@ -161,24 +135,8 @@ static void lwt_die(void * ret){
 
 static int lwt_yield(lwt_t thread){
 	lwt_t current = lwt_current();
-	/*printf("Current: %u, next %u\n", current, thread);
-	*wt_t temp = rq_head;
-	*hile(temp!=NULL){
-	*rintf("rq %u %u\n", temp->id, temp);
-	*temp = temp->next;
-	*}*/
-	//assert(rq_head == current);
 
 	if(thread == current || current->next == NULL) return 1;
-	/*if(current->next!=NULL){
-	*q_head = current->next;
-	*current->next=NULL;
-	*}
-	*if(rq_tail!=current){
-	*rq_tail->next = current;
-	*current->prev = rq_tail;
-	*rq_tail = current;
-	*}*/
 	rq_head = current->next;
 	rq_head->prev = NULL;
 	rq_tail->next = current;
@@ -189,7 +147,6 @@ static int lwt_yield(lwt_t thread){
 	if(thread != LWT_NULL && thread!= rq_head){
 		if(thread->id < 1 || thread->id > global_id) return 0;
 
-		//if(thread!=rq_head){
 		if(thread!=rq_tail){
 			thread->prev->next = thread->next;
 			thread->next->prev = thread->prev;
@@ -201,7 +158,6 @@ static int lwt_yield(lwt_t thread){
 		thread->prev = NULL;
 		thread->next = rq_head;
 		rq_head = thread;
-		//}
 	}
 	/*******************************/
 	//printf("I yield, next is %u!\n", rq_head);
@@ -210,11 +166,8 @@ static int lwt_yield(lwt_t thread){
 
 static inline lwt_t lwt_current(void){
 	unsigned int offset;
-	//unsigned int ret;
-	//ret = (unsigned int) &offset - ((unsigned int) &offset % STACK_SIZE);
 	//printf("%u to %u with %u\n", &offset, ret, (unsigned int) &offset % STACK_SIZE);
 	return (unsigned int) &offset - ((unsigned int) &offset % STACK_SIZE);
-	//return active;
 }
 
 static inline int lwt_id(lwt_t thread){
@@ -235,15 +188,8 @@ static inline void __lwt_schedule(void){
 
 static volatile inline void __lwt_dispatch(lwt_t current, lwt_t next){
 
-	//int i=0, j=0;
-	//int* dumb;	
-	/*asm volatile("movl $ps_%=, %[out]\n\t"
-	*:[out]"=r" (i) : :); */
 
 	/***********************************/
-	//printf("dispatching from %u to %u, sp: %u\n", current, next, next->sp);
-	//printf("popping to %u, pushing %u\n", *((int*) next->sp),i);
-	//active = next;
 
 	asm volatile (	"pushl %ebp \n\t"
 			"pushl %eax \n\t"
@@ -259,14 +205,6 @@ static volatile inline void __lwt_dispatch(lwt_t current, lwt_t next){
 			:"=g" (current->sp)
 			:"g" (next->sp)
 			:"memory", "%esp");
-
-	/*printf("old stack: \n");
-	*for(i = 0; i<=8; i++)
-	*printf("stack %u: %u: %u\n", current->sp, (int*) current->sp+i, *((int*) current->sp+i));	
-	*printf("new stack: \n");
-	*for(i = 0; i<=8; i++)
-	*printf("stack %u: %u: %u\n", next->sp, (int*) next->sp+i, *((int*) next->sp+i));	
-	**/
 
 	asm volatile ("popl %edi \n\t"
 			"jmp %edi\n\n"
@@ -325,14 +263,11 @@ static void __lwt_stack_return(void *stk){
 static void __lwt_stack_create(void){
 	void* allthatmemory=aligned_alloc(STACK_SIZE, MAX_THREADS * STACK_SIZE);
 	int i = 0;
-	//printf("allthat: %u\n", allthatmemory);
 	for(i = 0; i<MAX_THREADS; i++){
 		lwt_t current = allthatmemory + i*STACK_SIZE;
 		if(i==0) current->next = NULL;
 		else current->next = (int) current - STACK_SIZE;
-		//printf("thread at %u, next %u\n", current, current->next); 
 	}
 	pool_head = allthatmemory + (i-1)*STACK_SIZE;
-	//printf("head at %u\n", pool_head);
 }
 
