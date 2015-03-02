@@ -7,6 +7,6 @@ CC=gcc
 	$(CC) $(CFLAGS) $(DEFINES) -o $@ -c $<
 $(BIN): $(OBJS)
 	$(CC) $(CFLAGS) $(DEFINES) -o $(BIN) $^
-	rm $(OBJS)
+
 clean:
 	rm $(BIN)
