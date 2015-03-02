@@ -124,10 +124,10 @@ static inline int lwt_yield(lwt_t thread){
 	rq_tail = current;
 	current->next = NULL;
 
-	if(thread != LWT_NULL && thread!= rq_head){
-		if(thread->ret!=LWT_NULL) return 0;
+	if(thread != LWT_NULL && thread != rq_head){
+		if(thread->ret != LWT_NULL) return 0;
 		
-		if(thread!=rq_tail){
+		if(thread != rq_tail){
 			thread->prev->next = thread->next;
 			thread->next->prev = thread->prev;
 		}
@@ -154,15 +154,15 @@ static inline int lwt_id(lwt_t thread){
 static inline int lwt_info(lwt_info_t t){
 	
 	lwt_t temp = rq_head;
-	int active=0, blocked=0, dead=0;
+	int active = 0, blocked = 0, dead = 0;
 
-	while(temp!=NULL){
-		if(temp->joinlist!=NULL) blocked++;
+	while(temp != NULL){
+		if(temp->joinlist != NULL) blocked++;
 		active++;
 		temp = temp->next;
 	}
 	temp = pool_head;
-	while(temp!=NULL){
+	while(temp != NULL){
 		dead++;
 		temp = temp->next;
 	}
@@ -223,7 +223,7 @@ static volatile void __lwt_trampoline(void){
 	assert(0);
 }
 static inline void * __lwt_stack_get(void){
-	if(pool_head==NULL){
+	if(pool_head == NULL){
 		printf("OUT OF FREE THREADS!\n");
 		return NULL;
 	}
@@ -239,11 +239,11 @@ static inline void __lwt_stack_return(void *stk){
 	pool_head = ret;
 }
 static void __lwt_stack_create(void){
-	void* allthatmemory=aligned_alloc(STACK_SIZE, MAX_THREADS * STACK_SIZE);
+	void* allthatmemory = aligned_alloc(STACK_SIZE, MAX_THREADS * STACK_SIZE);
 	int i = 0;
-	for(i = 0; i<MAX_THREADS; i++){
+	for(i = 0; i < MAX_THREADS; i++){
 		lwt_t current = allthatmemory + i*STACK_SIZE;
-		if(i==0) current->next = NULL;
+		if(i == 0) current->next = NULL;
 		else current->next = (int) current - STACK_SIZE;
 	}
 	pool_head = allthatmemory + (i-1)*STACK_SIZE;
