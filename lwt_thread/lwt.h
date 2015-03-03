@@ -23,12 +23,15 @@ typedef enum {
 } lwt_state_t;
 
 typedef void *(*lwt_fn_t)(void *);
+typedef struct lwt_tcb *lwt_t;
+typedef struct lwt_channel *lwt_chan_t; 
 
 typedef struct lwt_tcb {
 	unsigned int id;
 	volatile void *sp, *joinret;
 	struct lwt_tcb *next, *prev, *joiner, *snd_next, *snd_prev;
 	void *param, *ret, *snd_data;
+	lwt_chan_t recv_chan;
 	lwt_state_t state;
 	lwt_fn_t function;
 } *lwt_t;
@@ -80,8 +83,8 @@ static inline int lwt_yield(lwt_t thread){
 	rq_tail = rq_head;	
 	rq_head = rq_head->next;
 
-	if(thread==LWT_NULL || thread==rq_head) goto finish;	
-	if(thread->state!=RUNNABLE || thread==lwt_current()) goto fail;
+	if(thread == LWT_NULL || thread == rq_head) goto finish;	
+	if(thread->state != RUNNABLE || thread == lwt_current()) goto fail;
 
 	thread->prev->next = thread->next;
 	thread->next->prev = thread->prev;
@@ -112,9 +115,9 @@ static inline int lwt_id(lwt_t thread){
 }
 
 static inline int lwt_info(lwt_info_t t){
-	int active=0, blocked=0, dead=0, i=0;
+	int active = 0, blocked = 0, dead = 0, i = 0;
 
-	for(i = 0; i<MAX_THREADS; i++){
+	for(i = 0; i < MAX_THREADS; i++){
 		if(((lwt_t) (start+i*STACK_SIZE))->state == RUNNABLE) active++;
 		if(((lwt_t) (start+i*STACK_SIZE))->state == BLOCKED) blocked++;
 		if(((lwt_t) (start+i*STACK_SIZE))->state == ZOMBIE) dead++;
@@ -173,7 +176,7 @@ static inline void __lwt_trampoline(void){
 	assert(0);
 }
 static inline void * __lwt_stack_get(void){
-	if(pool_head==NULL){
+	if(pool_head == NULL){
 		printf("OUT OF FREE THREADS!\n");
 		return NULL;
 	}
@@ -189,19 +192,19 @@ static inline void __lwt_stack_return(void *stk){
 	pool_head = ret;
 }
 static inline void __lwt_stack_create(void){
-	void* allthatmemory=aligned_alloc(STACK_SIZE, MAX_THREADS * STACK_SIZE);
+	void* allthatmemory = aligned_alloc(STACK_SIZE, MAX_THREADS * STACK_SIZE);
 	int i = 0;
-	for(i = 0; i<MAX_THREADS; i++){
+	for(i = 0; i < MAX_THREADS; i++){
 		lwt_t current = allthatmemory + i*STACK_SIZE;
 		current->state = DEAD;
-		if(i==0) current->next = NULL;
+		if(i == 0) current->next = NULL;
 		else current->next = (int) current - STACK_SIZE;
 	}
-	pool_head = allthatmemory + (i-1)*STACK_SIZE;
+	pool_head = allthatmemory + (i - 1) * STACK_SIZE;
 	start = allthatmemory;
 }
 static inline void __lwt_enqueue(lwt_t* head, lwt_t *tail, lwt_t insert){
-	if(*head==NULL){
+	if(*head == NULL){
 		*head = insert;
 		insert->prev = insert;
 		*tail = insert;

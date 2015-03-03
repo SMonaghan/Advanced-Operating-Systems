@@ -18,7 +18,7 @@ lwt_t lwt_create(lwt_fn_t fn, void *data){
 	lwt_t lwt_thd = __lwt_stack_get();
 	lwt_thd->id = global_id;
 	global_id++;
-	void* sp = (int) lwt_thd + STACK_SIZE-4;
+	void* sp = (int) lwt_thd + STACK_SIZE - 4;
 	
 	lwt_thd->param = data;
 	lwt_thd->function = fn;
@@ -28,7 +28,7 @@ lwt_t lwt_create(lwt_fn_t fn, void *data){
 	*((int*) sp-1) = __lwt_trampoline;
 	*((int*) sp-2) = 0;
 
-	lwt_thd->sp = sp-4;
+	lwt_thd->sp = sp - 4;
 	__lwt_enqueue(&rq_head, &rq_tail, lwt_thd);
 
 	lwt_thd->state = RUNNABLE;
@@ -41,7 +41,7 @@ void * lwt_join(lwt_t thread){
 	if(current == thread) return NULL;
 	if(thread->state == ZOMBIE) goto zombie;	
 	
-	assert(__lwt_dequeue(&rq_head, &rq_tail)==current);
+	assert(__lwt_dequeue(&rq_head, &rq_tail) == current);
 	thread->joiner = current;
 	current->state = BLOCKED;
 	__lwt_schedule();
@@ -74,15 +74,30 @@ void lwt_die(void * ret){
 }
 
 lwt_chan_t lwt_chan(int sz){
-	return NULL;
+	lwt_chan_t chan = malloc(sizeof(struct lwt_channel));
+	chan->snd_cnt = 0;
+	chan->rcv_cnt = 0;
+	lwt_current()->recv_chan = chan;
+	chan->receiver = lwt_current();
+	return chan;
 }
 
 void lwt_chan_deref(lwt_chan_t c){
-	return;
+	
+	lwt_t current = lwt_current();
+	if(c->receiver==current) c->rcv_cnt = -1;
+	else{
+		if(current->snd_next==NULL) return;
+
+		c->snd_cnt--;
+		current->snd_prev->snd_next = current->snd_next;
+		current->snd_next->snd_prev = current->snd_prev;
+	}
+	if(c->snd_cnt <= 0 && c->rcv_cnt == -1) free(c);	
 }
 
 int lwt_snd(lwt_chan_t c, void* data){
-	assert(data!=NULL);	
+	assert(data != NULL);	
 	if(c->rcv_cnt == -1) return -1;
 
 	if(c->rcv_cnt == 1){
@@ -103,7 +118,7 @@ int lwt_snd(lwt_chan_t c, void* data){
 }
 
 void* lwt_rcv(lwt_chan_t c){
-	if(c->snd_cnt==0) return NULL;
+	if(c->snd_cnt == 0) return NULL;
 	if(c->block_q_head != NULL){ //assume this is how it works
 		lwt_t sender = __lwt_dequeue(&(c->block_q_head), &(c->block_q_tail));
 		__lwt_enqueue(&rq_head, &rq_tail, sender);
@@ -127,9 +142,14 @@ lwt_chan_t lwt_rcv_chan(lwt_chan_t c){
 	lwt_chan_t rcving = lwt_rcv(c);
 	lwt_t current = lwt_current();
 	__lwt_enqueue(&(rcving->senders_head), &(rcving->senders_tail), current);
+	c->snd_cnt += 1;
 	return rcving;
 }
 
 lwt_t lwt_create_chan(lwt_chan_fn_t fn, lwt_chan_t c){
-	return NULL;
+	lwt_t lwt = lwt_create(fn, NULL);
+	lwt->recv_chan = c;
+	__lwt_enqueue(&(c->senders_head), &(c->senders_tail), lwt);
+	c->snd_cnt += 1;
+	return lwt;
 }
