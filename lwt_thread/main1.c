@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <assert.h>
 
-#include "lwt_thread.h"
+#include <lwt.h>
 
 #define rdtscll(val) __asm__ __volatile__("rdtsc" : "=A" (val))
 
@@ -50,7 +50,6 @@ test_perf(void)
 	lwt_t chld1, chld2;
 	int i;
 	unsigned long long start, end;
-
 
 	/* Performance tests */
 	rdtscll(start);

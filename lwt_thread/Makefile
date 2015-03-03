@@ -1,11 +1,19 @@
-OBJS=test.o
-CFLAGS=-g -O3 -w -m32
+OBJS=main1.o lwt.o
+CFLAGS=-O3 -I. -w -m32
 #DEFINES=-DTHINK_TIME
-BIN=thread
+DEPS = lwt.h
 CC=gcc
-%.o:%.c
-	$(CC) $(CFLAGS) $(DEFINES) -o $@ -c $<
-$(BIN): $(OBJS)
-	$(CC) $(CFLAGS) $(DEFINES) -o $(BIN) $^
+BIN = lwt_test
+	
+all:
+	make lwt.o
+	make main1.o
+	$(CC) $(CFLAGS) $(OBJS) -o $(BIN)
+
+%.o: %.c $(DEPS)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 clean:
+	rm $(OBJS)
 	rm $(BIN)
+	
