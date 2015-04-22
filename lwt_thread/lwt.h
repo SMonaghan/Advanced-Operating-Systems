@@ -31,12 +31,19 @@ typedef enum {
 	LWT_NOJOIN
 } lwt_flags_t;
 
+typedef enum {
+	WRITE,
+	ENQUEUE,
+	UNBLOCK
+} lwt_msg_cmd_t;
+
 typedef void *(*lwt_fn_t)(void *);
 typedef void *(*lwt_chan_fn_t)(lwt_chan_t);
 typedef struct lwt_tcb* lwt_t;
 typedef struct lwt_ktcb* lwt_kthd_t;
 typedef struct lwt_channel* lwt_chan_t;
 typedef struct lwt_chan_group* lwt_cgrp_t;
+typedef struct lwt_msg* lwt_msg_t;
 
 struct lwt_tcb {
 	struct lwt_tcb *next, *prev, *joiner;
@@ -69,15 +76,19 @@ struct ring_buf {
 struct lwt_ktcb {
 	pthread_t id;
 	volatile struct ring_buf* wf_rb;
-	pthread_cond_t block_var;
+	pthread_cond_t block_cv;
 	pthread_mutex_t block_mutex;
+	int asleep;
 };
 struct lwt_kthd_init {
 	pthread_t id;
 	lwt_fn_t fn;
 	lwt_chan_t c;
 };
-
+struct lwt_msg {
+	lwt_msg_cmd_t command;
+	void* data[2];
+};
 extern __thread lwt_kthd_t ktcb;
 extern __thread lwt_t rq_head;
 extern __thread lwt_t pool_head, temp_pool;
@@ -111,6 +122,8 @@ static inline void	__lwt_cgrp_denotify(lwt_chan_t c);
 int 			lwt_kthd_create (lwt_fn_t fn, lwt_chan_t c);
 void			__lwt_kthd_init (struct lwt_kthd_init* new_init);
 void			__lwt_idle	(void);
+void			__lwt_msg_snd   (lwt_kthd_t kthd, lwt_msg_cmd_t cmd, void* data1, void* data2);
+void			__lwt_setup	(void);
 
 void* 	   		lwt_join	(lwt_t thread);
 void 	   		lwt_die		(void * ret);
@@ -132,6 +145,8 @@ static inline void 	__lwt_list_add	(void* prev, void* next, void* insert);
 static inline void 	__lwt_list_rem	(void* prev, void* next);
 static inline void	__lwt_list_enq_s(void** q_head, void* insert);
 static inline void	__lwt_list_deq_s(void** q_head);
+static inline int	__lwt_rb_isfull (struct ring_buf* buf);
+static inline int	__lwt_rb_isempty(struct ring_buf* buf);
 static inline int 	__lwt_rb_add	(struct ring_buf* buf, void* value);
 static inline void* 	__lwt_rb_rem	(struct ring_buf* buf);
 static inline int	__lwt_rb_add_wf (struct ring_buf* buf, void* value);
@@ -191,18 +206,22 @@ static inline void* lwt_rcv(lwt_chan_t c){
 	return __lwt_rcv_sync(c);
 }
 static inline int __lwt_snd_sync(lwt_chan_t c, void* data){
-	__lwt_unblock(c->receiver, data);
+	if(c->owner != ktcb) __lwt_msg_snd(c->owner, UNBLOCK, c->receiver, data);
+	else __lwt_unblock(c->receiver, data);
 	return 0;
 }
 static inline void* __lwt_rcv_sync(lwt_chan_t c){
 	lwt_t sender = c->block_q_head->next;
 	__lwt_list_rem(sender->prev, sender->next);
-	__lwt_unblock(sender, sender->blk_data);	
+	if(sender->owner != ktcb) __lwt_msg_snd(sender->owner, UNBLOCK, sender, sender->blk_data);
+	else __lwt_unblock(sender, sender->blk_data);	
 	if(c->group && c->block_q_head == c->block_q_head->next) __lwt_cgrp_denotify(c);
 	return sender->blk_data;
 }
 static inline void __lwt_snd_async(lwt_chan_t c, void* data){
-	if(!__lwt_rb_add(c->buf, data)) __lwt_snd_block(c, data);
+	if(__lwt_rb_isfull(c->buf)) __lwt_snd_block(c, data);
+	else if(c->owner != ktcb) __lwt_msg_snd(c->owner, WRITE, c->buf, data);
+	else __lwt_rb_add(c->buf, data);
 }
 static inline void* __lwt_rcv_async(lwt_chan_t c){
 	void* ret = __lwt_rb_rem(c->buf);
@@ -217,7 +236,10 @@ static inline void __lwt_snd_block(lwt_chan_t c, void* data){
 	lwt_t current = lwt_current();
 	__lwt_list_rem(rq_head->prev, rq_head->next);
 	rq_head = rq_head->next;
+
+	if(c->owner != ktcb) __lwt_msg_snd(c->owner, ENQUEUE, c->block_q_head, current);
 	__lwt_list_add(c->block_q_head->prev, c->block_q_head, current);
+	
 	current->state = SND_BLK;
 	current->blk_data = data;
 	__lwt_schedule();
@@ -226,8 +248,14 @@ static inline void* __lwt_rcv_block(lwt_chan_t c){
 	return __lwt_block(lwt_current(), RCV_BLK);
 }
 static inline void __lwt_cgrp_notify(lwt_chan_t c){
-	if(c->receiver->state == GRP_BLK) __lwt_unblock(c->receiver, c);
-	if(!c->event) __lwt_list_add(c->group->event_q_head->prev, c->group->event_q_head, c);
+	if(c->receiver->state == GRP_BLK){
+		if(c->owner != ktcb) __lwt_msg_snd(c->owner, UNBLOCK, c->receiver, c);
+		else __lwt_unblock(c->receiver, c);
+	}
+	if(!c->event){
+		if(c->owner != ktcb) __lwt_msg_snd(c->owner, ENQUEUE, c->group->event_q_head, c);
+		else __lwt_list_add(c->group->event_q_head->prev, c->group->event_q_head, c);
+	}
 }	
 static inline void __lwt_cgrp_denotify(lwt_chan_t c){
 	__lwt_list_rem(c->prev, c->next);
@@ -322,15 +350,17 @@ static inline void __lwt_list_rem(void* prev, void* next){
 	((lwt_t) prev)->next = next;
 	((lwt_t) next)->prev = prev;
 }
+static inline int __lwt_rb_isfull(struct ring_buf* buf){ return buf->count == buf->size; }
 static inline int __lwt_rb_add(struct ring_buf* buf, void* value){
-	if(buf->count == buf->size) return 0;
+	if(__lwt_rb_isfull(buf)) return 0;
 	buf->buffer[buf->tail] = value;
 	buf->tail = (buf->tail+1)%(buf->size);
 	buf->count++;
 	return 1;
 }
+static inline int __lwt_rb_isempty(struct ring_buf* buf){ return buf->count == 0; }
 static inline void* __lwt_rb_rem(struct ring_buf* buf){
-	if(buf->count == 0) return 0;
+	if(__lwt_rb_isempty(buf)) return 0;
 	void* ret = buf->buffer[buf->head];
 	buf->head = (buf->head+1)%(buf->size);
 	buf->count--;

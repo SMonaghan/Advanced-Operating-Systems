@@ -9,6 +9,11 @@ __thread unsigned int global_id, n_chan;
 int main(void);
 
 void __attribute__ ((constructor)) __lwt_init(){
+	__lwt_setup();
+	ktcb->id = NULL;
+	__lwt_schedule();
+}
+void __lwt_setup(){
 	__lwt_stack_create();
 	global_id = 1;
 	n_chan = 0;
@@ -17,18 +22,16 @@ void __attribute__ ((constructor)) __lwt_init(){
 	global_id++;
 	maint->function = main;
 	maint->flags = LWT_NOJOIN;
-	maint->owner = ktcb;
 	
 	ktcb = malloc(sizeof(struct lwt_ktcb));
 	ktcb->wf_rb = __lwt_rb_create(WAIT_FREE_RB_SIZE);
-	pthread_cond_init(&(ktcb->block_var), NULL);
+	pthread_cond_init(&(ktcb->block_cv), NULL);
 	pthread_mutex_init(&(ktcb->block_mutex), NULL);
+	maint->owner = ktcb;
 
 	rq_head = maint->next = maint->prev = maint;
 	maint->state = RUNNABLE;
 	lwt_create(__lwt_idle, NULL, LWT_NOJOIN);
-	printf("here rq: %d, next: %d, maint: %d\n", rq_head->id, rq_head->next->id, maint->id);
-	__lwt_schedule();
 }
 int lwt_kthd_create(lwt_fn_t fn, lwt_chan_t c){
 	struct lwt_kthd_init* new_init = malloc(sizeof(struct lwt_kthd_init));
@@ -41,23 +44,54 @@ int lwt_kthd_create(lwt_fn_t fn, lwt_chan_t c){
 	return 0;
 }
 void __lwt_kthd_init(struct lwt_kthd_init* new_init){
-	__lwt_init();
+	__lwt_setup();
 	ktcb->id = new_init->id;
 	rq_head->function = new_init->fn;
 	rq_head->param = new_init->c;
 	new_init->c->snd_cnt++;
 	free(new_init);
-	lwt_yield(LWT_NULL);
+	//lwt_yield(LWT_NULL);
+	__lwt_schedule();
 }
 void __lwt_idle(){
 	while(1){
 		if(ktcb->wf_rb->tail > ktcb->wf_rb->head){
-			//consume
+			lwt_msg_t msg = __lwt_rb_rem_wf(ktcb->wf_rb);
+			while(msg){
+				switch (msg->command){
+				case WRITE:
+					__lwt_rb_add(msg->data[0], msg->data[1]);
+					break;
+				case ENQUEUE:
+					__lwt_list_add(((lwt_t)(msg->data[0]))->prev, msg->data[0], msg->data[1]); 
+					break;
+				case UNBLOCK:
+					__lwt_unblock(msg->data[0], msg->data[1]);
+					break;
+				}
+				free(msg);
+				msg = __lwt_rb_rem_wf(ktcb->wf_rb);
+			}
 		}
 		if(rq_head->next == rq_head){
-			//block
+			pthread_mutex_lock(&(ktcb->block_mutex));
+			ktcb->asleep = 1;
+			while(ktcb->asleep) pthread_cond_wait(&(ktcb->block_cv), &(ktcb->block_mutex));
+			pthread_mutex_unlock(&(ktcb->block_mutex));
 		}
 		lwt_yield(LWT_NULL);
+	}
+}
+void __lwt_msg_snd(lwt_kthd_t kthd, lwt_msg_cmd_t cmd, void* data1, void* data2){
+	lwt_msg_t new_msg = malloc(sizeof(struct lwt_msg));
+	new_msg->command = cmd;
+	new_msg->data[0] = data1;
+	new_msg->data[1] = data2;
+	
+	__lwt_rb_add_wf(kthd->wf_rb, new_msg);
+	if(kthd->asleep){
+		kthd->asleep = 0;
+		pthread_cond_signal(&(kthd->block_cv));
 	}
 }
 lwt_t lwt_create(lwt_fn_t fn, void *data, lwt_flags_t flags){
@@ -105,8 +139,8 @@ void lwt_die(void * ret){
 	
 	end:
 	if(current->id == 1){
-		free(start);
-		pthread_exit(ret);
+		if(ktcb->id == NULL) exit(0);
+		else pthread_exit(ret);
 	}
 	__lwt_list_rem(rq_head->prev, rq_head->next);
 	lwt_yield(LWT_NULL);

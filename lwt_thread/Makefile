@@ -1,4 +1,4 @@
-OBJS=main3.o lwt.o
+OBJS=comm_test.o lwt.o
 CFLAGS=-O3 -I. -w -m32
 LIBS=-pthread
 DEPS=lwt.h
@@ -7,7 +7,7 @@ BIN=lwt_test
 	
 all:
 	make lwt.o
-	make main3.o
+	make comm_test.o
 	$(CC) $(CFLAGS) $(OBJS) -o $(BIN) $(LIBS)
 
 %.o: %.c $(DEPS)
