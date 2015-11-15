@@ -1,10 +1,10 @@
 #include "lwt.h"
 
-__thread struct lwt_ktcb* ktcb;
-__thread lwt_t rq_head;
+__thread lwt_kthd_t ktcb;
+__thread lwt_t rq_head, idle;
 __thread lwt_t pool_head, temp_pool;
 __thread void* start;
-__thread unsigned int global_id, n_chan;
+__thread unsigned int global_id, n_chan, n_util_thds;
 
 int main(void);
 
@@ -28,10 +28,14 @@ void __lwt_setup(){
 	pthread_cond_init(&(ktcb->block_cv), NULL);
 	pthread_mutex_init(&(ktcb->block_mutex), NULL);
 	maint->owner = ktcb;
+	ktcb->block_q_head = malloc(sizeof(struct lwt_ktcb));
+	ktcb->block_q_head->next = ktcb->block_q_head->prev = ktcb->block_q_head;
 
 	rq_head = maint->next = maint->prev = maint;
 	maint->state = RUNNABLE;
-	lwt_create(__lwt_idle, NULL, LWT_NOJOIN);
+	idle = lwt_create(__lwt_idle, NULL, LWT_NOJOIN);
+	idle->state = BLOCKED;
+	__lwt_list_rem(idle->prev, idle->next);
 }
 int lwt_kthd_create(lwt_fn_t fn, lwt_chan_t c){
 	struct lwt_kthd_init* new_init = malloc(sizeof(struct lwt_kthd_init));
@@ -50,49 +54,68 @@ void __lwt_kthd_init(struct lwt_kthd_init* new_init){
 	rq_head->param = new_init->c;
 	new_init->c->snd_cnt++;
 	free(new_init);
-	//lwt_yield(LWT_NULL);
 	__lwt_schedule();
 }
 void __lwt_idle(){
+	lwt_msg_t msg;
 	while(1){
-		if(ktcb->wf_rb->tail > ktcb->wf_rb->head){
-			lwt_msg_t msg = __lwt_rb_rem_wf(ktcb->wf_rb);
-			while(msg){
-				switch (msg->command){
-				case WRITE:
-					__lwt_rb_add(msg->data[0], msg->data[1]);
-					break;
-				case ENQUEUE:
-					__lwt_list_add(((lwt_t)(msg->data[0]))->prev, msg->data[0], msg->data[1]); 
-					break;
-				case UNBLOCK:
-					__lwt_unblock(msg->data[0], msg->data[1]);
-					break;
-				}
-				free(msg);
-				msg = __lwt_rb_rem_wf(ktcb->wf_rb);
+		msg = __lwt_rb_rem_wf(ktcb->wf_rb);		
+		while(msg){	
+			msg_process:
+			if(msg->c->receiver->state != RCV_BLK && msg->c->buf && !__lwt_rb_isfull(msg->c->buf)){
+				lwt_create(__lwt_rcv_msg, msg, LWT_NOJOIN);
+				n_util_thds++;
+				if(n_util_thds >= MAX_UTIL_THDS) lwt_yield(LWT_NULL);
 			}
+			else lwt_snd(msg->c, msg->data);
+			msg = __lwt_rb_rem_wf(ktcb->wf_rb);
 		}
+		__lwt_deq_wake();
 		if(rq_head->next == rq_head){
-			pthread_mutex_lock(&(ktcb->block_mutex));
-			ktcb->asleep = 1;
-			while(ktcb->asleep) pthread_cond_wait(&(ktcb->block_cv), &(ktcb->block_mutex));
-			pthread_mutex_unlock(&(ktcb->block_mutex));
+			//printf("%d idle sleep, head: %d, tail: %d\n", ktcb, ktcb->wf_rb->head, ktcb->wf_rb->tail);
+			msg = __lwt_rb_rem_wf(ktcb->wf_rb);
+			if(!msg) __lwt_kthd_sleep();
+			else goto msg_process;
 		}
-		lwt_yield(LWT_NULL);
+		if(rq_head != rq_head->next){
+			//printf("idle sleeping\n");
+			__lwt_block(lwt_current(), BLOCKED);	
+		}
 	}
 }
-void __lwt_msg_snd(lwt_kthd_t kthd, lwt_msg_cmd_t cmd, void* data1, void* data2){
+void __lwt_kthd_sleep(){
+	pthread_mutex_lock(&(ktcb->block_mutex));
+	ktcb->asleep = 1;
+	while(ktcb->asleep) pthread_cond_wait(&(ktcb->block_cv), &(ktcb->block_mutex));
+	pthread_mutex_unlock(&(ktcb->block_mutex));
+	//printf("%d awake!\n", ktcb);
+}
+void __lwt_kthd_wake(lwt_kthd_t wake_up){
+	pthread_mutex_lock(&(wake_up->block_mutex));
+	wake_up->asleep = 0;
+	pthread_cond_signal(&(wake_up->block_cv));
+	pthread_mutex_unlock(&(wake_up->block_mutex));
+}
+int __lwt_snd_msg(lwt_chan_t c, void* data){
 	lwt_msg_t new_msg = malloc(sizeof(struct lwt_msg));
-	new_msg->command = cmd;
-	new_msg->data[0] = data1;
-	new_msg->data[1] = data2;
+	new_msg->c = c;
+	new_msg->data = data;
 	
-	__lwt_rb_add_wf(kthd->wf_rb, new_msg);
-	if(kthd->asleep){
-		kthd->asleep = 0;
-		pthread_cond_signal(&(kthd->block_cv));
+	while(!__lwt_rb_add_wf(c->owner->wf_rb, new_msg)){
+		//printf("buffer full, %d waiting\n", ktcb);
+		__lwt_enq_sleep(c->owner, ktcb);
+		//__lwt_kthd_sleep();
 	}
+	//printf("%d sent msg, head: %d, tail: %d\n", ktcb, c->owner->wf_rb->head, c->owner->wf_rb->tail);
+	if(c->owner->asleep){
+		__lwt_kthd_wake(c->owner);
+	}
+	return 0;
+}
+void __lwt_rcv_msg(lwt_msg_t msg){
+	lwt_snd(msg->c, msg->data);
+	free(msg);
+	n_util_thds--;
 }
 lwt_t lwt_create(lwt_fn_t fn, void *data, lwt_flags_t flags){
 	lwt_t lwt_thd = __lwt_stack_get();
@@ -133,22 +156,20 @@ void * lwt_join(lwt_t thread){
 void lwt_die(void * ret){
 	lwt_t current = lwt_current();
 	current->state = DEAD;
-	if(__builtin_expect(current->flags, 0)) goto nojoin;
 	if(current->joiner == LWT_NULL) current->state = ZOMBIE;
-	else __lwt_unblock(current->joiner, ret);
-	
-	end:
+	else __lwt_unblock(current->joiner, ret);	
 	if(current->id == 1){
 		if(ktcb->id == NULL) exit(0);
 		else pthread_exit(ret);
 	}
-	__lwt_list_rem(rq_head->prev, rq_head->next);
-	lwt_yield(LWT_NULL);
-
-	nojoin:
-	current->next = temp_pool;
-	temp_pool = current;
-	goto end;
+	if(current->next == current && idle->state == BLOCKED) __lwt_unblock(idle, NULL);
+	__lwt_list_rem(current->prev, current->next);
+	rq_head = current->next;
+	if(current->flags == LWT_NOJOIN){
+		current->next = temp_pool;
+		temp_pool = current;
+	}
+	__lwt_schedule();
 }
 int lwt_info(lwt_info_t t){
 	int active=0, blocked=0, zombies=0, snd=0, rcv=0, i=0;

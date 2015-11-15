@@ -1,5 +1,5 @@
 OBJS=comm_test.o lwt.o
-CFLAGS=-O3 -I. -w -m32
+CFLAGS=-O3 -I. -w -m32 -fprofile-arcs -ftest-coverage
 LIBS=-pthread
 DEPS=lwt.h
 CC=gcc
