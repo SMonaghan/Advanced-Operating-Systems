@@ -49,6 +49,7 @@ void* rcv_func(lwt_chan_t c)
 
 void dumb_func(lwt_chan_t dumb)
 {
+	printf("In dumb\n");
 	printf("dumb function %d\n", dumb);
 }
 
@@ -116,7 +117,7 @@ int main()
 	lwt_kthd_create(dumb_func, receiver);
 	//sleep(1);
 	printf("done being dumb\n");
-
+	assert(0);
 	/*for(i = 1; i<135; i++){	
 		ret = __lwt_rb_add_wf(ktcb->wf_rb, i);
 		printf("i = %d, Status: %d, added %d\n", i, ret, i);
